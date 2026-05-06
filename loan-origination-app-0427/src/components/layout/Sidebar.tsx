@@ -134,11 +134,11 @@ export function Sidebar() {
           className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0"
           style={{ background: 'linear-gradient(135deg,#1E4480,#0F9D8F)' }}
         >
-          TT
+          DP
         </div>
         {!collapsed && (
           <div>
-            <div className="text-xs font-medium text-white">Tyler Toth</div>
+            <div className="text-xs font-medium text-white">Dhruv Patel</div>
             <div className="text-[10px] text-white/35">Loan Officer</div>
           </div>
         )}

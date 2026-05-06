@@ -173,6 +173,9 @@ export function LoanDetail() {
             openAssistant({
               label: caseId,
               body: `Loan case ${caseId} for ${detailData.borrower.fullName}. Stage: ${stage}. Loan: ${detailData.loanTerms.type} ${detailData.loanTerms.amount} at ${detailData.loanTerms.rate}. Credit ${detailData.metrics.creditScore}, DTI ${detailData.metrics.dti}%, LTV ${detailData.metrics.ltv}%. Property: ${detailData.property.address}. Employment: ${detailData.employment.title} at ${detailData.employment.employer}, ${detailData.employment.income}.`,
+              instanceId: remoteCase?.caseInstanceId ?? caseInstanceId,
+              folderKey: remoteCase?.folderKey ?? folderKey,
+              caseId,
             })
           }
         >

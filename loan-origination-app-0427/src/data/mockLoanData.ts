@@ -296,7 +296,7 @@ export function buildLoanDetail(borrower: string, caseId: string, caseInstanceId
         id: 'h2',
         title: 'Loan officer comment + attachments',
         time: 'Apr 10, 2:30 PM',
-        detail: 'Tyler Toth noted borrower employment change. Uploaded termination and offer letters.',
+        detail: 'Dhruv Patel noted borrower employment change. Uploaded termination and offer letters.',
         dot: 'amber',
       },
       {

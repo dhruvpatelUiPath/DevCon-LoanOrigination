@@ -6,6 +6,12 @@ export interface AssistantContextBlurb {
   label: string;
   /** Free-form context sent to the agent as an initial system-style hint. */
   body: string;
+  /** Maestro case instance GUID — needed by Get Case State path param. */
+  instanceId?: string;
+  /** Orchestrator folder GUID — needed as the x-uipath-folderkey header. */
+  folderKey?: string;
+  /** Human-readable case ID (e.g. "LA-2026-00847") for display. */
+  caseId?: string;
 }
 
 interface AssistantContextValue {

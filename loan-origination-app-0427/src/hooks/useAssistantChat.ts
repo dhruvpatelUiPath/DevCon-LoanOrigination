@@ -4,6 +4,20 @@ import {
   MessageRole,
 } from '@uipath/uipath-typescript/conversational-agent';
 import { useAuth } from './useAuth';
+import type { AssistantContextBlurb } from './useAssistant';
+
+const escapeXml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function buildCaseContextBlock(ctx: AssistantContextBlurb): string {
+  const lines: string[] = ['<case-context>'];
+  if (ctx.instanceId) lines.push(`  <instanceId>${escapeXml(ctx.instanceId)}</instanceId>`);
+  if (ctx.folderKey) lines.push(`  <folderKey>${escapeXml(ctx.folderKey)}</folderKey>`);
+  if (ctx.caseId) lines.push(`  <caseId>${escapeXml(ctx.caseId)}</caseId>`);
+  if (ctx.body) lines.push(`  <summary>${escapeXml(ctx.body)}</summary>`);
+  lines.push('</case-context>');
+  return lines.join('\n');
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Configuration — reads VITE_CASE_MANAGER_AGENT_ID and VITE_CASE_MANAGER_FOLDER_ID
@@ -36,7 +50,7 @@ export interface UseAssistantChatResult {
   isReady: boolean;
   isConfigured: boolean;
   error: string | null;
-  sendMessage: (text: string, opts?: { seedContext?: string }) => Promise<void>;
+  sendMessage: (text: string, opts?: { caseContext?: AssistantContextBlurb }) => Promise<void>;
   reset: () => void;
 }
 
@@ -181,13 +195,14 @@ export function useAssistantChat(): UseAssistantChatResult {
       // we touch the SDK — avoids the multi-second blank pause.
       setMessages((prev) => {
         const additions: AssistantMessage[] = [];
-        // Inject per-case context on the first send only
-        if (opts?.seedContext && !seededRef.current) {
+        // Show a one-time system bubble so the user sees the case is loaded.
+        // The actual <case-context> block goes on every wire payload below.
+        if (opts?.caseContext && !seededRef.current) {
           seededRef.current = true;
           additions.push({
             id: `sys-${Date.now()}`,
             role: 'system',
-            content: opts.seedContext,
+            content: opts.caseContext.body,
             createdAt: Date.now(),
           });
         }
@@ -236,13 +251,13 @@ export function useAssistantChat(): UseAssistantChatResult {
 
         const exchange = session.startExchange({ exchangeId });
 
-        // Seed context on the first turn — lets the agent ground itself in
-        // whichever case the user opened the panel from. Prepend it inline to
-        // the user's first message so the agent receives a single user turn.
-        const payload =
-          opts?.seedContext && seededRef.current && messages.length === 0
-            ? `Context: ${opts.seedContext}\n\n${trimmed}`
-            : trimmed;
+        // Prepend a structured <case-context> block on EVERY user message so
+        // tools like Get Case State can read instanceId + folderKey reliably
+        // (folderKey populates the x-uipath-folderkey header). Without this
+        // on every turn, follow-up messages lose context and tool calls 400.
+        const ctx = opts?.caseContext;
+        const hasIds = !!(ctx?.instanceId && ctx?.folderKey);
+        const payload = hasIds ? `${buildCaseContextBlock(ctx!)}\n\n${trimmed}` : trimmed;
 
         // Explicit message lifecycle (matches the SDK reference's recommended
         // pattern). One-shot helpers were not eliciting agent responses.
@@ -263,7 +278,7 @@ export function useAssistantChat(): UseAssistantChatResult {
         setIsStreaming(false);
       }
     },
-    [ensureSession, messages.length],
+    [ensureSession],
   );
 
   const reset = useCallback(() => {

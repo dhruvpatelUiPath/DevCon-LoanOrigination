@@ -74,7 +74,7 @@ function MorningBrief({ onOpenQueue, onAskAgent }: { onOpenQueue: () => void; on
       month: 'long',
       day: 'numeric',
     });
-    return { greet: `${greet}, Tyler`, sub: `${subtitle} · Your morning brief` };
+    return { greet: `${greet}, Dhruv`, sub: `${subtitle} · Your morning brief` };
   }, []);
 
   const [nowIdx, setNowIdx] = useState(0);

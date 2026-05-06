@@ -44,7 +44,7 @@ export function AssistantPanel() {
   const handleSend = async (text: string) => {
     if (!text.trim() || isStreaming) return;
     setDraft('');
-    await sendMessage(text, context ? { seedContext: context.body } : undefined);
+    await sendMessage(text, context ? { caseContext: context } : undefined);
   };
 
   return (
@@ -301,7 +301,7 @@ function Bubble({ message }: { message: AssistantMessage }) {
           className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[9px] font-semibold flex-shrink-0"
           style={{ background: 'var(--blue)' }}
         >
-          TT
+          DP
         </div>
       ) : (
         <div
