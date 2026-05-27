@@ -19,6 +19,8 @@ import {
   fetchLoanCaseById,
 } from '../../services/loanService';
 import { useAuth } from '../../hooks/useAuth';
+import { useLoanCases } from '../../hooks/useLoanCases';
+import { useLoanApplications } from '../../hooks/useLoanApplications';
 import { MOCK_LOAN_DETAIL, buildLoanDetail } from '../../data/mockLoanData';
 import type { LoanCase, LoanDetailData } from '../../types/loan';
 import type { CaseGetStageResponse } from '@uipath/uipath-typescript/cases';
@@ -44,6 +46,8 @@ export function LoanDetail() {
   const navigate = useNavigate();
   const { sdk } = useAuth();
   const { open: openAssistant } = useAssistant();
+  const { cases } = useLoanCases();
+  const { applications } = useLoanApplications();
   useTheme();
 
   const [tab, setTab] = useState<TabKey>('overview');
@@ -128,19 +132,48 @@ export function LoanDetail() {
   // falls back to MOCK_LOAN_DETAIL.stage — show a skeleton instead of stale data.
   const loadingLiveState = isLive && (loading || liveStage === null);
 
-  const title = 'Priya Sharma — $425,000';
+  const currentApplication = useMemo(() => {
+    if (!caseInstanceId) return null;
+    return applications.find((a) => a.caseInstanceId === caseInstanceId) ?? null;
+  }, [applications, caseInstanceId]);
+
+  const title = useMemo(() => {
+    const amount = currentApplication?.loanAmount;
+    if (typeof amount === 'number' && Number.isFinite(amount)) {
+      return `Priya Sharma — $${amount.toLocaleString('en-US')}`;
+    }
+    return 'Priya Sharma — $425,000';
+  }, [currentApplication]);
   const caseId = detailData.caseId;
 
+  const latestLiveCase = useMemo(() => {
+    const live = cases.filter((c) => c.isReal && c.startedTime);
+    if (live.length === 0) return null;
+    return live.reduce((latest, c) =>
+      new Date(c.startedTime!).getTime() > new Date(latest.startedTime!).getTime() ? c : latest,
+    );
+  }, [cases]);
+
   const maestroUrl = useMemo(() => {
-    if (!remoteCase?.isReal) return null;
     const orgName = import.meta.env.VITE_UIPATH_ORG_NAME ?? '';
     const tenantName = import.meta.env.VITE_UIPATH_TENANT_NAME ?? '';
     const processKey = import.meta.env.VITE_CASE_ID ?? '';
     if (!orgName || !tenantName || !processKey) return null;
-    return `https://staging.uipath.com/${orgName}/${tenantName}/maestro_/cases/${processKey}/instances/${remoteCase.caseInstanceId}?folderKey=${encodeURIComponent(
-      remoteCase.folderKey,
+
+    // Prefer the case on the current page when it's a real instance, so each
+    // Priya entry's "Open in Maestro" lands on its own run. Mock pages fall
+    // back to whatever live run is most recent.
+    const target =
+      isLive && caseInstanceId && effectiveFolderKey
+        ? { caseInstanceId, folderKey: effectiveFolderKey }
+        : latestLiveCase
+          ? { caseInstanceId: latestLiveCase.caseInstanceId, folderKey: latestLiveCase.folderKey }
+          : null;
+    if (!target) return null;
+    return `https://staging.uipath.com/${orgName}/${tenantName}/maestro_/cases/${processKey}/instances/${target.caseInstanceId}?folderKey=${encodeURIComponent(
+      target.folderKey,
     )}`;
-  }, [remoteCase]);
+  }, [isLive, caseInstanceId, effectiveFolderKey, latestLiveCase]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>

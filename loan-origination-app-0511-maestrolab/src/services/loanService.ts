@@ -357,6 +357,58 @@ export async function createLoanApplication(
   return entities.insertRecordById(LOAN_ENTITY_ID, data);
 }
 
+export interface LoanApplicationRecord {
+  recordId: string;
+  caseInstanceId: string | null;
+  loanType: string | null;
+  loanAmount: number | null;
+  applicationStatus: string | null;
+  createTime: string | null;
+}
+
+// Maestro stamps the case instance id back onto the entity row after the run
+// starts; the field name has shifted across builds, so accept a few variants.
+const CASE_ID_FIELD_NAMES = ['CaseID', 'CaseId', 'caseId', 'caseID', 'CaseInstanceId'];
+
+function readEntityString(record: EntityRecord, ...names: string[]): string | null {
+  const keys = Object.keys(record);
+  for (const name of names) {
+    const key = keys.find((k) => k.toLowerCase() === name.toLowerCase());
+    if (!key) continue;
+    const v = record[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  return null;
+}
+
+function readEntityNumber(record: EntityRecord, name: string): number | null {
+  const key = Object.keys(record).find((k) => k.toLowerCase() === name.toLowerCase());
+  if (!key) return null;
+  const v = record[key];
+  return typeof v === 'number' ? v : null;
+}
+
+export async function fetchLoanApplicationRecords(
+  sdk: UiPath,
+): Promise<LoanApplicationRecord[]> {
+  if (!LOAN_ENTITY_ID) return [];
+  try {
+    const entities = new Entities(sdk);
+    const resp = await entities.getAllRecords(LOAN_ENTITY_ID, { pageSize: 200 });
+    return resp.items.map((r) => ({
+      recordId: r.Id,
+      caseInstanceId: readEntityString(r, ...CASE_ID_FIELD_NAMES),
+      loanType: readEntityString(r, 'LoanType'),
+      loanAmount: readEntityNumber(r, 'LoanAmount'),
+      applicationStatus: readEntityString(r, 'ApplicationStatus'),
+      createTime: readEntityString(r, 'CreateTime', 'CreatedOn'),
+    }));
+  } catch (err) {
+    console.warn('fetchLoanApplicationRecords failed', err);
+    return [];
+  }
+}
+
 export async function triggerApproveWebhook(accessToken?: string): Promise<void> {
   if (!APPROVE_WEBHOOK_URL) {
     throw new Error('VITE_APPROVE_WEBHOOK_URL is not configured');

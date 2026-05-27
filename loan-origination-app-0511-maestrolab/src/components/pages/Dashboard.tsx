@@ -1,20 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '../layout/Header';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { NewLoanModal } from '../dashboard/NewLoanModal';
 import { useLoanCases } from '../../hooks/useLoanCases';
+import { useLoanApplications } from '../../hooks/useLoanApplications';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
 import type { LoanCase } from '../../types/loan';
+import type { LoanApplicationRecord } from '../../services/loanService';
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { cases, refresh, usedFallback } = useLoanCases();
+  const { cases, refresh: refreshCases, usedFallback } = useLoanCases();
+  const { applications, refresh: refreshApplications } = useLoanApplications();
   const [newLoanOpen, setNewLoanOpen] = useState(false);
 
   const liveCases = useMemo(() => cases.filter((c) => c.isReal), [cases]);
+
+  const handleRefresh = useCallback(async () => {
+    await Promise.all([refreshCases(), refreshApplications()]);
+  }, [refreshCases, refreshApplications]);
 
   return (
     <>
@@ -23,7 +30,7 @@ export function Dashboard() {
         subtitle={
           usedFallback ? 'Demo data · Your agentic lending workspace' : 'Your agentic lending workspace'
         }
-        onRefresh={refresh}
+        onRefresh={handleRefresh}
         rightSlot={
           <Button variant="primary" onClick={() => setNewLoanOpen(true)}>
             + New loan
@@ -33,13 +40,13 @@ export function Dashboard() {
       <div className="flex-1 overflow-y-auto p-6">
         <MorningBrief onOpenQueue={() => navigate('/queue')} />
         <PortfolioPulse onNav={navigate} />
-        <DecideToday cases={cases} />
+        <DecideToday cases={cases} applications={applications} />
         {liveCases.length > 0 && <LiveInstancesTeaser liveCases={liveCases} />}
       </div>
       <NewLoanModal
         open={newLoanOpen}
         onClose={() => setNewLoanOpen(false)}
-        onCreated={refresh}
+        onCreated={handleRefresh}
       />
     </>
   );
@@ -269,28 +276,68 @@ interface DecisionRow {
   folderKey?: string;
 }
 
-function DecideToday({ cases }: { cases: LoanCase[] }) {
+function formatLoanAmount(amount: number | null | undefined): string {
+  if (amount == null || !Number.isFinite(amount)) return '—';
+  if (amount >= 1_000_000) {
+    const m = (amount / 1_000_000).toFixed(2).replace(/\.?0+$/, '');
+    return `$${m}M`;
+  }
+  if (amount >= 1_000) return `$${Math.round(amount / 1_000)}K`;
+  return `$${amount}`;
+}
+
+function DecideToday({
+  cases,
+  applications,
+}: {
+  cases: LoanCase[];
+  applications: LoanApplicationRecord[];
+}) {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const liveTopReview = cases.find((c) => c.isReal);
+  // Match each entity record to its case instance so we can pull the folderKey
+  // and current stage. Records without a live case yet are skipped.
+  const caseByInstance = useMemo(() => {
+    const map = new Map<string, LoanCase>();
+    for (const c of cases) {
+      if (c.isReal) map.set(c.caseInstanceId, c);
+    }
+    return map;
+  }, [cases]);
+
+  const priyaRows: DecisionRow[] = useMemo(() => {
+    return applications
+      .filter((a) => a.caseInstanceId && caseByInstance.has(a.caseInstanceId))
+      .slice()
+      .sort((a, b) => {
+        const ta = a.createTime ? Date.parse(a.createTime) : 0;
+        const tb = b.createTime ? Date.parse(b.createTime) : 0;
+        return tb - ta;
+      })
+      .slice(0, 1)
+      .map((a) => {
+        const c = caseByInstance.get(a.caseInstanceId!)!;
+        return {
+          urgency: 'red',
+          urgencyLabel: '12h left',
+          urgencyType: 'Processing',
+          borrower: 'Priya Sharma',
+          caseId: 'LA-2026-00847',
+          amount: formatLoanAmount(a.loanAmount),
+          stage: c.stage,
+          summary:
+            'Pay-stub correction processed cleanly — package is green (756 / 29.8% / 85%) and ready for underwriting review. Approve and I’ll trigger Underwriting entry; Automated risk assessment fires first.',
+          primaryAction: { label: 'Approve to UW' },
+          secondaryAction: { label: 'Open →' },
+          caseInstanceId: c.caseInstanceId,
+          folderKey: c.folderKey,
+        };
+      });
+  }, [applications, caseByInstance]);
 
   const todayRows: DecisionRow[] = [
-    {
-      urgency: 'red',
-      urgencyLabel: '12h left',
-      urgencyType: 'Processing',
-      borrower: 'Priya Sharma',
-      caseId: 'LA-2026-00847',
-      amount: '$425K',
-      stage: liveTopReview?.stage ?? 'Processing',
-      summary:
-        'Pay-stub correction processed cleanly — package is green (756 / 29.8% / 85%) and ready for underwriting review. Approve and I’ll trigger Underwriting entry; Automated risk assessment fires first.',
-      primaryAction: { label: 'Approve to UW' },
-      secondaryAction: { label: 'Open →' },
-      caseInstanceId: liveTopReview?.caseInstanceId,
-      folderKey: liveTopReview?.folderKey,
-    },
+    ...priyaRows,
     {
       urgency: 'red',
       urgencyLabel: '24h left',
@@ -377,7 +424,7 @@ function DecideToday({ cases }: { cases: LoanCase[] }) {
 
       {todayRows.map((row) => (
         <DecideRow
-          key={`${row.caseId}-${row.urgencyLabel}`}
+          key={`${row.caseInstanceId ?? row.caseId}-${row.urgencyLabel}`}
           row={row}
           onOpen={() => openRow(row)}
           onAction={(label) => toast(`${label}: ${row.borrower}`)}
@@ -404,7 +451,7 @@ function DecideToday({ cases }: { cases: LoanCase[] }) {
 
       {weekRows.map((row) => (
         <DecideRow
-          key={`${row.caseId}-${row.urgencyLabel}`}
+          key={`${row.caseInstanceId ?? row.caseId}-${row.urgencyLabel}`}
           row={row}
           onOpen={() => openRow(row)}
           onAction={(label) => toast(`${label}: ${row.borrower}`)}
