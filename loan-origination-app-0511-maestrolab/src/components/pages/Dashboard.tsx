@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '../layout/Header';
 import { Card } from '../ui/Card';
@@ -8,7 +8,7 @@ import { useLoanCases } from '../../hooks/useLoanCases';
 import { useLoanApplications } from '../../hooks/useLoanApplications';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
-import type { LoanCase } from '../../types/loan';
+import type { LoanCase, LoanStage } from '../../types/loan';
 import type { LoanApplicationRecord } from '../../services/loanService';
 
 export function Dashboard() {
@@ -38,7 +38,11 @@ export function Dashboard() {
         }
       />
       <div className="flex-1 overflow-y-auto p-6">
-        <MorningBrief onOpenQueue={() => navigate('/queue')} />
+        <MorningBrief
+          onOpenQueue={() => navigate('/queue')}
+          cases={cases}
+          applications={applications}
+        />
         <PortfolioPulse onNav={navigate} />
         <DecideToday cases={cases} applications={applications} />
         {liveCases.length > 0 && <LiveInstancesTeaser liveCases={liveCases} />}
@@ -55,196 +59,188 @@ export function Dashboard() {
 // ────────────────────────────────────────────────────────────────────────────
 // Zone 1: Morning Brief
 // ────────────────────────────────────────────────────────────────────────────
-function MorningBrief({ onOpenQueue }: { onOpenQueue: () => void }) {
-  const navigate = useNavigate();
+function MorningBrief({
+  onOpenQueue,
+  cases,
+  applications,
+}: {
+  onOpenQueue: () => void;
+  cases: LoanCase[];
+  applications: LoanApplicationRecord[];
+}) {
   const { user } = useAuth();
-  const greetingDate = useMemo(() => {
-    const d = new Date();
-    const h = d.getHours();
-    const greet = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-    const subtitle = d.toLocaleDateString(undefined, {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
-    const who = user?.firstName ?? 'there';
-    return { greet: `${greet}, ${who}`, sub: `${subtitle} · Your morning brief` };
-  }, [user?.firstName]);
+  const firstName = user?.firstName?.trim() ?? '';
+
+  // Pick the most recently created loan application that has a matching live
+  // case, and use its stage to pick the short Priya line.
+  const latestPriyaStage = useMemo<LoanStage | null>(() => {
+    const caseByInstance = new Map<string, LoanCase>();
+    for (const c of cases) {
+      if (c.isReal) caseByInstance.set(c.caseInstanceId, c);
+    }
+    const matched = applications
+      .filter((a) => a.caseInstanceId && caseByInstance.has(a.caseInstanceId))
+      .slice()
+      .sort((a, b) => {
+        const ta = a.createTime ? Date.parse(a.createTime) : 0;
+        const tb = b.createTime ? Date.parse(b.createTime) : 0;
+        return tb - ta;
+      });
+    const latest = matched[0];
+    if (!latest) return null;
+    return caseByInstance.get(latest.caseInstanceId!)?.stage ?? null;
+  }, [cases, applications]);
+
+  const priyaLine =
+    latestPriyaStage != null
+      ? PRIYA_BRIEF_BY_STAGE[latestPriyaStage]
+      : PRIYA_BRIEF_BY_STAGE.Processing;
+
+  const dateLabel = useMemo(
+    () =>
+      new Date().toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      }),
+    [],
+  );
 
   return (
     <div
-      className="lp-shimmer-wrap mb-5 px-6 py-5 rounded-2xl relative overflow-hidden"
+      className="lp-shimmer-wrap mb-5 px-7 py-7 rounded-2xl relative overflow-hidden"
       style={{
         background:
-          'linear-gradient(135deg, rgba(14,42,71,0.08), rgba(15,157,143,0.05) 60%, rgba(14,42,71,0.03))',
+          'linear-gradient(135deg, rgba(15,157,143,0.10), rgba(14,42,71,0.06) 65%, rgba(15,157,143,0.04))',
         border: '1px solid var(--navy-bd)',
       }}
     >
       <div
         className="grid gap-6 relative z-10 min-w-0 items-stretch"
-        style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 320px)' }}
+        style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 280px)' }}
       >
-        <div className="flex flex-col gap-3.5 min-w-0">
-          <div className="flex items-center gap-3">
-            <div
-              className="hero-logo w-10 h-10 rounded-[11px] flex-shrink-0"
-              style={{
-                background: 'linear-gradient(135deg,#0E2A47,#1E4480)',
-                animation: 'lp-agent-pulse 2.2s ease-in-out infinite',
-              }}
+        <div className="flex flex-col gap-3 min-w-0">
+          <div
+            className="inline-flex items-center gap-2 text-[10.5px] font-bold uppercase tracking-[0.7px]"
+            style={{ color: 'var(--green)' }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full lp-pulse"
+              style={{ background: 'var(--green)' }}
             />
-            <div className="flex-1 min-w-0">
-              <div className="text-[19px] font-bold leading-tight" style={{ color: 'var(--fg)' }}>
-                {greetingDate.greet}
-              </div>
-              <div
-                className="text-[11px] font-semibold uppercase tracking-[0.6px] mt-0.5"
-                style={{ color: 'var(--purple)' }}
-              >
-                {greetingDate.sub}
-              </div>
-            </div>
-          </div>
-
-          <div className="text-[13px] leading-relaxed" style={{ color: 'var(--fg2)' }}>
-            Overnight I resolved <b style={{ color: 'var(--fg)' }}>14 events</b> across 8 loans.{' '}
-            <b style={{ color: 'var(--fg)' }}>3 new intakes</b> in flight.{' '}
-            <Highlight tone="red">Today: 13 decisions, 3 SLA-critical.</Highlight>
-            <ul className="mt-2 flex flex-col gap-1 pl-5 list-disc marker:text-[var(--fg)]">
-              <li>
-                <b style={{ color: 'var(--fg)' }}>Marcus Johnson</b> is paused — rate-lock event
-                tripped the manager-approval rule.
-              </li>
-              <li>
-                <b style={{ color: 'var(--fg)' }}>Priya Sharma</b> is ready for underwriting
-                review after a pay-stub correction.
-              </li>
-            </ul>
+            <span>Agent on duty</span>
+            <span style={{ color: 'var(--fg4)' }}>·</span>
+            <span style={{ color: 'var(--fg3)' }}>{dateLabel}</span>
           </div>
 
           <div>
+            <div
+              className="text-[30px] font-extrabold leading-[1.1]"
+              style={{ color: 'var(--fg)' }}
+            >
+              {firstName ? `Good Morning ${firstName},` : 'Good Morning,'}
+            </div>
+            <div
+              className="text-[30px] font-extrabold leading-[1.1]"
+              style={{ color: 'var(--green)' }}
+            >
+              overnight I handled 14 events.
+            </div>
+          </div>
+
+          <div
+            className="text-[13px] leading-relaxed mt-1"
+            style={{ color: 'var(--fg2)' }}
+          >
+            <b style={{ color: 'var(--fg)' }}>8 loans</b> advanced ·{' '}
+            <b style={{ color: 'var(--fg)' }}>3 new intakes</b> in flight ·{' '}
+            <b style={{ color: 'var(--fg)' }}>14 decisions</b> ready for you today ·{' '}
+            <Highlight tone="red">3 SLA-critical</Highlight>
+          </div>
+
+          <div className="mt-1">
             <button
               onClick={onOpenQueue}
               className="px-5 py-2.5 rounded-[9px] text-[12.5px] font-semibold text-white transition-all inline-flex items-center gap-1.5 hover:-translate-y-px"
               style={{
-                background: 'var(--purple)',
-                border: '1px solid var(--purple)',
-                boxShadow: '0 4px 12px rgba(124,58,237,0.24)',
+                background: 'var(--green)',
+                border: '1px solid var(--green)',
+                boxShadow: '0 4px 12px rgba(15,157,143,0.28)',
               }}
             >
               Open decision queue →
             </button>
           </div>
+
+          <div
+            className="text-[12px] leading-relaxed mt-1"
+            style={{ color: 'var(--fg4)' }}
+          >
+            Marcus Johnson paused — rate-lock event tripped manager-approval rule. Priya Sharma{' '}
+            {priyaLine}
+          </div>
         </div>
 
-        <div
-          className="flex flex-col gap-1.5 h-full pl-5"
-          style={{ borderLeft: '1px solid rgba(148,163,184,0.32)' }}
-        >
-          {TREND_STATS.map((s) => (
-            <BriefTrendStat key={s.label} {...s} onClick={() => navigate(s.to)} />
-          ))}
-        </div>
+        <AgentHandledTodayCard />
       </div>
     </div>
   );
 }
 
-const TREND_STATS: {
-  dot: 'b' | 'p' | 'a' | 'r';
-  count: string;
-  label: string;
-  delta: string;
-  deltaTone: 'up' | 'down' | 'flat';
-  to: string;
-}[] = [
-  {
-    dot: 'b',
-    count: '47',
-    label: 'Active loans',
-    delta: '+5 vs yesterday',
-    deltaTone: 'up',
-    to: '/cases',
-  },
-  {
-    dot: 'p',
-    count: '34',
-    label: 'Agent-handled',
-    delta: '72% autonomy',
-    deltaTone: 'up',
-    to: '/agent-handled',
-  },
-  {
-    dot: 'a',
-    count: '13',
-    label: 'For you today',
-    delta: '4 high-value',
-    deltaTone: 'flat',
-    to: '/queue',
-  },
-  {
-    dot: 'r',
-    count: '3',
-    label: 'SLA at risk',
-    delta: '+1 in last hour',
-    deltaTone: 'down',
-    to: '/sla-risk',
-  },
-];
+function AgentHandledTodayCard() {
+  const TARGET = 34;
+  const START = 30;
+  const [count, setCount] = useState(START);
 
-function BriefTrendStat({
-  count,
-  label,
-  delta,
-  deltaTone,
-  onClick,
-}: {
-  dot: 'b' | 'p' | 'a' | 'r';
-  count: string;
-  label: string;
-  delta: string;
-  deltaTone: 'up' | 'down' | 'flat';
-  to: string;
-  onClick?: () => void;
-}) {
-  const toneColor =
-    deltaTone === 'up' ? 'var(--green)' : deltaTone === 'down' ? 'var(--red)' : 'var(--fg3)';
-  const arrow = deltaTone === 'up' ? '▲' : deltaTone === 'down' ? '▼' : '·';
+  useEffect(() => {
+    if (count >= TARGET) return;
+    const id = setTimeout(() => setCount((c) => Math.min(TARGET, c + 1)), 1600);
+    return () => clearTimeout(id);
+  }, [count]);
+
   return (
-    <button
-      onClick={onClick}
-      className="w-full flex-1 grid items-center gap-2 px-3 py-2 rounded-lg text-left transition-colors"
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        gridTemplateColumns: 'auto minmax(0, 1fr)',
-      }}
-      onMouseOver={(e) => {
-        e.currentTarget.style.borderColor = 'var(--purple)';
-      }}
-      onMouseOut={(e) => {
-        e.currentTarget.style.borderColor = 'var(--border)';
-      }}
+    <div
+      className="flex flex-col gap-2 p-4 rounded-xl"
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
     >
-      <b
-        className="text-[18px] leading-none"
-        style={{ color: 'var(--fg)', fontWeight: 700, minWidth: 38 }}
+      <div
+        className="text-[10px] font-bold uppercase tracking-[0.6px]"
+        style={{ color: 'var(--fg4)' }}
+      >
+        Agent handling live
+      </div>
+      <div
+        className="text-[54px] font-extrabold leading-none"
+        style={{ color: 'var(--green)' }}
       >
         {count}
-      </b>
-      <div className="flex flex-col min-w-0">
-        <span className="text-[11px] font-semibold" style={{ color: 'var(--fg2)' }}>
-          {label}
-        </span>
-        <span
-          className="text-[10px] font-medium inline-flex items-center gap-1"
-          style={{ color: toneColor }}
-        >
-          <span>{arrow}</span>
-          {delta}
-        </span>
       </div>
-    </button>
+      <div className="text-[11px]" style={{ color: 'var(--fg3)' }}>
+        <b style={{ color: 'var(--fg)' }}>72% autonomy</b> ·{' '}
+        <span style={{ color: 'var(--green)', fontWeight: 600 }}>▲ 8pp vs last week</span>
+      </div>
+      <div
+        className="grid grid-cols-2 gap-3 mt-2 pt-3"
+        style={{ borderTop: '1px solid var(--border)' }}
+      >
+        <div>
+          <div className="text-[16px] font-bold" style={{ color: 'var(--fg)' }}>
+            24/{count}
+          </div>
+          <div className="text-[10px]" style={{ color: 'var(--fg4)' }}>
+            Auto-resolved
+          </div>
+        </div>
+        <div>
+          <div className="text-[16px] font-bold" style={{ color: 'var(--fg)' }}>
+            142
+          </div>
+          <div className="text-[10px]" style={{ color: 'var(--fg4)' }}>
+            Tasks this week
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -275,6 +271,30 @@ interface DecisionRow {
   caseInstanceId?: string;
   folderKey?: string;
 }
+
+const PRIYA_BRIEF_BY_STAGE: Record<LoanStage, string> = {
+  Intake: 'in intake — agent running identity verification and credit pull.',
+  Processing: 'teed up for underwriting.',
+  Underwriting: 'cleared underwriting — recommended for QA/QC.',
+  'QA/QC': 'in QA/QC — compliance and audit checks running.',
+  Closing: 'in closing — disclosure acknowledged, funding queued.',
+  'Post Closing': 'funded — investor delivery in progress.',
+};
+
+const PRIYA_SUMMARIES_BY_STAGE: Record<LoanStage, string> = {
+  Intake:
+    "New application landed in Intake — agent is running identity verification, credit pull, and the initial eligibility check. I'll flag anything off-pattern; otherwise the package promotes to Processing automatically.",
+  Processing:
+    "Pay-stub correction processed cleanly — package is green (756 / 29.8% / 85%) and ready for underwriting review. Approve and I'll trigger Underwriting entry; Automated risk assessment fires first.",
+  Underwriting:
+    "Underwriting analysis complete — DTI 29.8%, LTV 85%, credit 756 all within policy. Automated risk assessment passed with high confidence and 3 precedent matches. Approve to advance to QA/QC.",
+  'QA/QC':
+    "QA/QC in flight — compliance, full audit, and CDLE comparison running in parallel. No exceptions raised so far; I'll surface anything that needs your eyes before Closing.",
+  Closing:
+    "Closing disclosure delivered and acknowledged — borrower signed, funding instructions queued. I'll trigger the wire once you confirm, or open to review the closing package.",
+  'Post Closing':
+    "Loan funded and disbursed — investor delivery packet assembled, post-closing reconciliation complete. The case is wrapping up; open to review the final package or audit trail.",
+};
 
 function formatLoanAmount(amount: number | null | undefined): string {
   if (amount == null || !Number.isFinite(amount)) return '—';
@@ -326,9 +346,8 @@ function DecideToday({
           caseId: 'LA-2026-00847',
           amount: formatLoanAmount(a.loanAmount),
           stage: c.stage,
-          summary:
-            'Pay-stub correction processed cleanly — package is green (756 / 29.8% / 85%) and ready for underwriting review. Approve and I’ll trigger Underwriting entry; Automated risk assessment fires first.',
-          primaryAction: { label: 'Approve to UW' },
+          summary: PRIYA_SUMMARIES_BY_STAGE[c.stage],
+          primaryAction: { label: 'Approve' },
           secondaryAction: { label: 'Open →' },
           caseInstanceId: c.caseInstanceId,
           folderKey: c.folderKey,

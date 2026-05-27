@@ -117,13 +117,30 @@ export function LoanDetail() {
     return () => clearInterval(id);
   }, [reloadStages, isLive]);
 
+  const currentApplication = useMemo(() => {
+    if (!caseInstanceId) return null;
+    return applications.find((a) => a.caseInstanceId === caseInstanceId) ?? null;
+  }, [applications, caseInstanceId]);
+
   const detailData: LoanDetailData = useMemo(() => {
     // Keep the displayed identity stable across live loads — only the
     // caseInstanceId is taken from the live case so Maestro/case linkage works.
-    return remoteCase
+    const base = remoteCase
       ? buildLoanDetail('Priya Sharma', 'LA-2026-00847', remoteCase.caseInstanceId)
       : MOCK_LOAN_DETAIL;
-  }, [remoteCase]);
+
+    const liveAmount = currentApplication?.loanAmount;
+    if (typeof liveAmount === 'number' && Number.isFinite(liveAmount)) {
+      return {
+        ...base,
+        loanTerms: {
+          ...base.loanTerms,
+          amount: `$${liveAmount.toLocaleString('en-US')}`,
+        },
+      };
+    }
+    return base;
+  }, [remoteCase, currentApplication]);
 
   const liveStage = useMemo(() => deriveCurrentStage(stages), [stages]);
   const stage = liveStage ?? detailData.stage;
@@ -131,11 +148,6 @@ export function LoanDetail() {
   // While a live case is still resolving its true stage, the displayed stage
   // falls back to MOCK_LOAN_DETAIL.stage — show a skeleton instead of stale data.
   const loadingLiveState = isLive && (loading || liveStage === null);
-
-  const currentApplication = useMemo(() => {
-    if (!caseInstanceId) return null;
-    return applications.find((a) => a.caseInstanceId === caseInstanceId) ?? null;
-  }, [applications, caseInstanceId]);
 
   const title = useMemo(() => {
     const amount = currentApplication?.loanAmount;
@@ -298,7 +310,15 @@ export function LoanDetail() {
         <DocumentsTab data={detailData} borrowerName={detailData.borrower.fullName} />
       )}
       {tab === 'history' && <HistoryTab data={detailData} stage={stage} />}
-      {tab === 'comments' && <CommentsTab data={detailData} />}
+      {tab === 'comments' && (
+        <CommentsTab
+          data={detailData}
+          applicantId={
+            currentApplication?.applicantId ?? (import.meta.env.VITE_APPLICANT_ID as string) ?? ''
+          }
+          loanId={currentApplication?.recordId ?? ''}
+        />
+      )}
     </div>
   );
 }

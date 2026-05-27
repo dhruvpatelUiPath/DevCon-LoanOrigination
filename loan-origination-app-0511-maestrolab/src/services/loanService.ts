@@ -364,11 +364,15 @@ export interface LoanApplicationRecord {
   loanAmount: number | null;
   applicationStatus: string | null;
   createTime: string | null;
+  applicantId: string | null;
 }
 
 // Maestro stamps the case instance id back onto the entity row after the run
 // starts; the field name has shifted across builds, so accept a few variants.
 const CASE_ID_FIELD_NAMES = ['CaseID', 'CaseId', 'caseId', 'caseID', 'CaseInstanceId'];
+
+const APPLICANT_COMMENTS_ENTITY_ID =
+  import.meta.env.VITE_APPLICANT_COMMENTS_ENTITY_ID ?? '284b3576-8657-f111-8fcb-000d3a45fabb';
 
 function readEntityString(record: EntityRecord, ...names: string[]): string | null {
   const keys = Object.keys(record);
@@ -388,6 +392,23 @@ function readEntityNumber(record: EntityRecord, name: string): number | null {
   return typeof v === 'number' ? v : null;
 }
 
+// Data Fabric reference fields land as either a plain string id or an object
+// like { Id, Name, ... } — try both shapes so we don't miss the relation.
+function readEntityRefId(record: EntityRecord, ...names: string[]): string | null {
+  const keys = Object.keys(record);
+  for (const name of names) {
+    const key = keys.find((k) => k.toLowerCase() === name.toLowerCase());
+    if (!key) continue;
+    const v = record[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+    if (v && typeof v === 'object' && 'Id' in v) {
+      const id = (v as { Id: unknown }).Id;
+      if (typeof id === 'string' && id.length > 0) return id;
+    }
+  }
+  return null;
+}
+
 export async function fetchLoanApplicationRecords(
   sdk: UiPath,
 ): Promise<LoanApplicationRecord[]> {
@@ -402,9 +423,121 @@ export async function fetchLoanApplicationRecords(
       loanAmount: readEntityNumber(r, 'LoanAmount'),
       applicationStatus: readEntityString(r, 'ApplicationStatus'),
       createTime: readEntityString(r, 'CreateTime', 'CreatedOn'),
+      applicantId: readEntityRefId(r, 'Applicant', 'ApplicantID', 'ApplicantId', 'ApplicantUserID'),
     }));
   } catch (err) {
     console.warn('fetchLoanApplicationRecords failed', err);
+    return [];
+  }
+}
+
+export interface ApplicantComment {
+  recordId: string;
+  body: string;
+  time: string | null;
+  author: string | null;
+}
+
+// Pulls the applicant-side comments entity and filters client-side to rows
+// linked to this loan (LoanID = the LoanOriginationEntity row id) and applicant
+// (ApplicantID = the demo applicant id). Field names accept reference-object
+// shape because Data Fabric returns relations as { Id, Name, ... }.
+export async function fetchApplicantComments(
+  sdk: UiPath,
+  applicantId: string,
+  loanId: string,
+): Promise<ApplicantComment[]> {
+  if (!APPLICANT_COMMENTS_ENTITY_ID || !applicantId || !loanId) return [];
+  try {
+    const entities = new Entities(sdk);
+    const resp = await entities.getAllRecords(APPLICANT_COMMENTS_ENTITY_ID, { pageSize: 200 });
+    if (import.meta.env.DEV) {
+      console.log('[applicantComments] fetched', {
+        applicantId,
+        loanId,
+        totalRows: resp.items.length,
+        sampleKeys: resp.items[0] ? Object.keys(resp.items[0]) : null,
+        sampleRow: resp.items[0],
+      });
+      // Inline summary of every row's ApplicantID/LoanID so we can eyeball
+      // matches without expanding nested object logs.
+      resp.items.forEach((r, i) => {
+        const rApp = readEntityRefId(
+          r,
+          'ApplicanID',
+          'ApplicantID',
+          'ApplicantId',
+          'Applicant',
+          'ApplicantUserID',
+        );
+        const rLoan = readEntityRefId(
+          r,
+          'LoanID',
+          'LoanId',
+          'Loan',
+          'LoanOrigination',
+          'LoanOriginationEntity',
+        );
+        console.log(
+          `[applicantComments] row[${i}] id=${r.Id} ApplicantID=${rApp} LoanID=${rLoan}`,
+        );
+      });
+    }
+    const normalizeId = (s: string | null) => (s ?? '').trim().toLowerCase();
+    const wantApplicant = normalizeId(applicantId);
+    const wantLoan = normalizeId(loanId);
+    const matched = resp.items.filter((r) => {
+      const recApplicantId = readEntityRefId(
+        r,
+        'ApplicanID',
+        'ApplicantID',
+        'ApplicantId',
+        'Applicant',
+        'ApplicantUserID',
+      );
+      const recLoanId = readEntityRefId(
+        r,
+        'LoanID',
+        'LoanId',
+        'Loan',
+        'LoanOrigination',
+        'LoanOriginationEntity',
+      );
+      const isMatch =
+        normalizeId(recApplicantId) === wantApplicant &&
+        normalizeId(recLoanId) === wantLoan;
+      if (import.meta.env.DEV && !isMatch) {
+        console.log(
+          `[applicantComments] skipped row id=${r.Id} ApplicantID=${recApplicantId} LoanID=${recLoanId} (wanted ApplicantID=${applicantId} LoanID=${loanId})`,
+        );
+      }
+      return isMatch;
+    });
+    const mapped: ApplicantComment[] = matched.map((r) => ({
+      recordId: r.Id,
+      body:
+        readEntityString(
+          r,
+          'Commentary',
+          'Comment',
+          'CommentText',
+          'Body',
+          'Message',
+          'Text',
+          'Note',
+        ) ?? '',
+      time: readEntityString(r, 'CreateTime', 'CreatedTime', 'CreatedOn', 'Timestamp'),
+      author: readEntityString(r, 'AuthorName', 'Author', 'Name', 'ApplicantName'),
+    }));
+    // Newest first.
+    mapped.sort((a, b) => {
+      const ta = a.time ? Date.parse(a.time) : 0;
+      const tb = b.time ? Date.parse(b.time) : 0;
+      return tb - ta;
+    });
+    return mapped;
+  } catch (err) {
+    console.warn('fetchApplicantComments failed', err);
     return [];
   }
 }
@@ -532,6 +665,17 @@ export function actionCenterUrlForTask(taskId: number | string): string | null {
   const tenantName = import.meta.env.VITE_UIPATH_TENANT_NAME as string | undefined;
   if (!orgName || !tenantName) return null;
   return `https://staging.uipath.com/${orgName}/${tenantName}/actions_/tasks/${taskId}`;
+}
+
+// Embed URL for the Action Center "current-task" view, per:
+// https://docs.uipath.com/action-center/automation-cloud/latest/user-guide/embedding-actions
+// Renders just the single task without the surrounding Action Center chrome,
+// safe to drop into an iframe in the host app.
+export function embedActionCenterUrlForTask(taskId: number | string): string | null {
+  const orgName = import.meta.env.VITE_UIPATH_ORG_NAME as string | undefined;
+  const tenantName = import.meta.env.VITE_UIPATH_TENANT_NAME as string | undefined;
+  if (!orgName || !tenantName) return null;
+  return `https://staging.uipath.com/embed_/${orgName}/${tenantName}/actions_/current-task/tasks/${taskId}`;
 }
 
 export interface EntityDocument {

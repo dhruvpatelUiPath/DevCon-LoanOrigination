@@ -1,10 +1,12 @@
 import { Card, CardHeader } from '../ui/Card';
 import { Pill } from '../ui/Pill';
 import { SimilarCasesCard } from '../ui/SimilarCasesCard';
+import { ActionEmbedModal } from '../ui/ActionEmbedModal';
 import { useToast } from '../../hooks/useToast';
 import {
   actionCenterUrlForTask,
   completeMaestroActionTask,
+  embedActionCenterUrlForTask,
   findOpenActionTask,
 } from '../../services/loanService';
 import { useAuth } from '../../hooks/useAuth';
@@ -37,7 +39,8 @@ export function OverviewTab({
   const { sdk } = useAuth();
   const [approving, setApproving] = useState(false);
   const [transition, setTransition] = useState<{ from: LoanStage; to: LoanStage } | null>(null);
-  const [actionTaskUrl, setActionTaskUrl] = useState<string | null>(null);
+  const [actionTaskId, setActionTaskId] = useState<number | string | null>(null);
+  const [actionModalOpen, setActionModalOpen] = useState(false);
   const stageOverview = getStageOverview(stage);
 
   useEffect(() => {
@@ -46,11 +49,12 @@ export function OverviewTab({
 
   useEffect(() => {
     let cancelled = false;
-    setActionTaskUrl(null);
+    setActionTaskId(null);
+    setActionModalOpen(false);
     if (!caseInstanceId || !folderKey || caseInstanceId.startsWith('mock-')) return;
     findOpenActionTask(sdk, caseInstanceId, folderKey, stage).then((task) => {
       if (cancelled || !task) return;
-      setActionTaskUrl(actionCenterUrlForTask(task.id));
+      setActionTaskId(task.id);
     });
     return () => {
       cancelled = true;
@@ -96,16 +100,20 @@ export function OverviewTab({
                 <span className="text-[10px] ml-1.5" style={{ color: 'var(--fg4)', fontWeight: 400 }}>
                   45 min ago
                 </span>
-                {actionTaskUrl && (
-                  <a
-                    href={actionTaskUrl}
-                    target="_blank"
-                    rel="noreferrer noopener"
+                {actionTaskId != null && (
+                  <button
+                    onClick={() => setActionModalOpen(true)}
                     className="ml-auto text-[11px] font-semibold hover:underline"
-                    style={{ color: 'var(--blue)' }}
+                    style={{
+                      color: 'var(--blue)',
+                      background: 'transparent',
+                      border: 0,
+                      padding: 0,
+                      cursor: 'pointer',
+                    }}
                   >
-                    Open in Actions ↗
-                  </a>
+                    Open in Actions
+                  </button>
                 )}
               </div>
               <div className="p-4">
@@ -296,6 +304,15 @@ export function OverviewTab({
           </div>
         </div>
       </div>
+      {actionTaskId != null && (
+        <ActionEmbedModal
+          open={actionModalOpen}
+          onClose={() => setActionModalOpen(false)}
+          taskId={actionTaskId}
+          embedUrl={embedActionCenterUrlForTask(actionTaskId) ?? ''}
+          externalUrl={actionCenterUrlForTask(actionTaskId)}
+        />
+      )}
     </div>
   );
 }
